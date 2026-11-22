@@ -496,12 +496,15 @@ function TeamsPanel({ state, teams, act }: { state: PublicState; teams: TeamMap;
   const structure = useMemo(() => resolveActual(s, []), [s]);
   const total = roundCount(Math.max(2, draw.length));
 
+  // 저장 중에도 다음 팀명을 입력할 수 있게: 보낸 이름만 비우고, 저장이 끝날 때까지 다음 제출은 대기
   const add = async () => {
-    if (!name.trim()) return;
+    const submitted = name.trim();
+    if (!submitted || adding) return;
+    setName("");
     setAdding(true);
-    const ok = await act("addTeam", { name: name.trim() });
+    const ok = await act("addTeam", { name: submitted });
     setAdding(false);
-    if (ok) setName("");
+    if (!ok) setName((cur) => cur || submitted);
   };
 
   const tapSlot = async (i: number) => {
@@ -547,7 +550,7 @@ function TeamsPanel({ state, teams, act }: { state: PublicState; teams: TeamMap;
             }}
           >
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="팀명 입력" maxLength={40} disabled={locked || state.teams.length >= MAX_TEAMS} />
-            <Button type="submit" loading={adding} disabled={locked || !name.trim() || state.teams.length >= MAX_TEAMS} className="h-11">
+            <Button type="submit" loading={adding} disabled={adding || locked || !name.trim() || state.teams.length >= MAX_TEAMS} className="h-11">
               추가
             </Button>
           </form>
