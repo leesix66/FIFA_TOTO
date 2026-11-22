@@ -278,7 +278,9 @@ function hash(s: string) {
 }
 
 export function TeamAvatar({ id, name, size = "md" }: { id: string; name: string; size?: "sm" | "md" | "lg" }) {
-  const initials = [...name.replace(/\s+/g, "")].slice(0, /[a-zA-Z]/.test(name[0] ?? "") ? 2 : 1).join("").toUpperCase();
+  // '[테스트] 개발팀' 처럼 괄호로 시작해도 글자만으로 이니셜을 만든다
+  const clean = name.replace(/\[[^\]]*\]|\([^)]*\)/g, "").replace(/[^\p{L}\p{N}]/gu, "") || name.replace(/[^\p{L}\p{N}]/gu, "");
+  const initials = [...clean].slice(0, /[a-zA-Z]/.test(clean[0] ?? "") ? 2 : 1).join("").toUpperCase();
   return (
     <span
       className={cx(
