@@ -14,13 +14,14 @@ export class ClientError extends Error {
 
 export async function api<T = unknown>(
   path: string,
-  opts: { method?: string; body?: unknown; token?: string | null } = {},
+  opts: { method?: string; body?: unknown; token?: string | null; device?: string | null } = {},
 ): Promise<T> {
   const res = await fetch(path, {
     method: opts.method ?? (opts.body !== undefined ? "POST" : "GET"),
     headers: {
       ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
       ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
+      ...(opts.device ? { "X-Device-Id": opts.device } : {}),
     },
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     cache: "no-store",
@@ -73,6 +74,50 @@ export function useStored(key: string): string | null {
     () => storage.get(key),
     () => null,
   );
+}
+
+// ── 기기 고유값 ───────────────────────────────────────
+// 참여자는 비밀번호 대신 '이 기기'로 식별한다. 처음 접속할 때 무작위 ID 를 만들어
+// localStorage 와 1년짜리 쿠키 양쪽에 보관한다 (한쪽이 지워져도 복구).
+const DEVICE_KEY = "fifa-toto.device";
+const DEVICE_RE = /^[A-Za-z0-9-]{16,64}$/;
+
+function readCookie(name: string): string | null {
+  try {
+    const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCookie(name: string, value: string) {
+  try {
+    document.cookie = `${name}=${encodeURIComponent(value)}; max-age=${60 * 60 * 24 * 365}; path=/; SameSite=Lax; Secure`;
+  } catch {
+    /* empty */
+  }
+}
+
+function newDeviceId(): string {
+  // randomUUID 는 https/localhost 에서만 제공되므로 대비책을 둔다
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+/** 이 기기의 고유 ID (SSR 중에는 null, 브라우저에서 처음 렌더 후 생성/복원) */
+export function useDeviceId(): string | null {
+  const stored = useStored(DEVICE_KEY);
+  useEffect(() => {
+    const ls = storage.get(DEVICE_KEY);
+    const ck = readCookie("ft_device");
+    const id = ls && DEVICE_RE.test(ls) ? ls : ck && DEVICE_RE.test(ck) ? ck : newDeviceId();
+    if (ls !== id) storage.set(DEVICE_KEY, id);
+    if (ck !== id) writeCookie("ft_device", id);
+  }, []);
+  return stored && DEVICE_RE.test(stored) ? stored : null;
 }
 
 type StateResponse = (PublicState & { version: string }) | { version: string; unchanged: true };

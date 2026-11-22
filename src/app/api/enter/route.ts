@@ -1,58 +1,53 @@
-import { hashPin, identOf, issueParticipantToken, verifyPin } from "@/lib/server/auth";
+import { identOf, requireDevice } from "@/lib/server/auth";
 import { check, db, fail, getSettings, participantCount } from "@/lib/server/db";
 import { body, route, str } from "@/lib/server/handler";
-
-const MAX_FAILS = 5;
-const LOCK_MS = 5 * 60 * 1000;
 
 interface Row {
   id: string;
   dept: string;
   name: string;
-  pin_hash: string;
-  failed_logins: number;
-  locked_until: string | null;
+  device_hash: string | null;
 }
 
-/** 참여 등록 + 재입장(로그인) 통합 */
+/**
+ * 참여 등록. 참여자는 '기기'로 식별한다.
+ * - 이 기기가 이미 등록돼 있으면 그 참여자를 그대로 사용
+ * - 같은 부서·이름이 다른 기기에 묶여 있으면 거부 (관리자가 '기기 초기화'하면 새 기기로 다시 묶을 수 있음)
+ */
 export const POST = route(async (req) => {
+  const device = requireDevice(req);
   const b = await body(req);
   const dept = str(b.dept, 40);
   const name = str(b.name, 30);
-  const pin = str(b.pin, 4);
   if (!dept) fail(400, "부서명을 입력하세요.");
   if (!name) fail(400, "이름을 입력하세요.");
-  if (!/^\d{4}$/.test(pin)) fail(400, "비밀번호는 숫자 4자리입니다.");
   const ident = identOf(dept, name);
 
-  const existing = check(
-    await db()
-      .from("participants")
-      .select("id,dept,name,pin_hash,failed_logins,locked_until")
-      .eq("ident", ident)
-      .maybeSingle(),
+  const mine = check(
+    await db().from("participants").select("id,dept,name,device_hash").eq("device_hash", device).maybeSingle(),
   ) as Row | null;
+  if (mine) {
+    if (identOf(mine.dept, mine.name) === ident) return { created: false };
+    fail(409, `이 기기는 이미 '${mine.dept} ${mine.name}'(으)로 참여했습니다. 한 기기에서는 한 명만 참여할 수 있어요.`);
+  }
 
+  const existing = check(
+    await db().from("participants").select("id,dept,name,device_hash").eq("ident", ident).maybeSingle(),
+  ) as Row | null;
   if (existing) {
-    if (existing.locked_until && new Date(existing.locked_until).getTime() > Date.now()) {
-      fail(429, "비밀번호를 여러 번 틀렸습니다. 5분 후 다시 시도하세요.");
+    if (existing.device_hash) {
+      fail(403, "이미 다른 기기에서 등록된 참여자입니다. 처음 등록한 기기에서 접속하거나, 관리자에게 '기기 초기화'를 요청하세요.");
     }
-    if (!verifyPin(pin, existing.pin_hash)) {
-      const fails = existing.failed_logins + 1;
-      await db()
-        .from("participants")
-        .update(
-          fails >= MAX_FAILS
-            ? { failed_logins: 0, locked_until: new Date(Date.now() + LOCK_MS).toISOString() }
-            : { failed_logins: fails },
-        )
-        .eq("id", existing.id);
-      fail(401, `이미 등록된 참여자입니다. 비밀번호가 일치하지 않습니다. (${Math.min(fails, MAX_FAILS)}/${MAX_FAILS})`);
-    }
-    if (existing.failed_logins > 0 || existing.locked_until) {
-      await db().from("participants").update({ failed_logins: 0, locked_until: null }).eq("id", existing.id);
-    }
-    return { token: issueParticipantToken(existing.id), created: false };
+    // 관리자가 기기 초기화한 참여자 → 이 기기로 다시 연결
+    const upd = await db()
+      .from("participants")
+      .update({ device_hash: device })
+      .eq("id", existing.id)
+      .is("device_hash", null)
+      .select("id");
+    if (upd.error) fail(500, `DB 오류: ${upd.error.message}`);
+    if (!upd.data?.length) fail(409, "방금 다른 기기에서 연결되었습니다.");
+    return { created: false, relinked: true };
   }
 
   const settings = await getSettings();
@@ -64,14 +59,10 @@ export const POST = route(async (req) => {
   }
   if (b.confirm !== true) return { needsConfirm: true, dept, name };
 
-  const ins = await db()
-    .from("participants")
-    .insert({ dept, name, ident, pin_hash: hashPin(pin) })
-    .select("id")
-    .single();
+  const ins = await db().from("participants").insert({ dept, name, ident, device_hash: device }).select("id").single();
   if (ins.error) {
-    if (ins.error.code === "23505") fail(409, "방금 같은 이름으로 등록되었습니다. 다시 입장해 주세요.");
+    if (ins.error.code === "23505") fail(409, "이미 등록된 참여자이거나, 이 기기로 이미 참여했습니다. 새로고침해 주세요.");
     fail(500, `DB 오류: ${ins.error.message}`);
   }
-  return { token: issueParticipantToken(ins.data.id), created: true };
+  return { created: true };
 });

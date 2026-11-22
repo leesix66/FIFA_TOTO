@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   isPlayable,
   resolveActual,
@@ -13,7 +13,7 @@ import {
   type PickEntry,
   type Picks,
 } from "@/lib/bracket";
-import { api, ClientError, pct, storage, useLiveState, useStored } from "@/lib/client";
+import { api, pct, useDeviceId, useLiveState } from "@/lib/client";
 import type { Me, OtherPicks, PublicState } from "@/lib/types";
 import { BracketLayout, PickCard, ResultCard, useTeamMap, type TeamMap } from "@/components/bracket-ui";
 import { Hero } from "@/components/hero";
@@ -35,7 +35,6 @@ import {
   useToast,
 } from "@/components/ui";
 
-const TOKEN_KEY = "fifa-toto.token";
 type Tab = "picks" | "rank" | "results";
 
 export default function ParticipantApp() {
@@ -49,46 +48,32 @@ export default function ParticipantApp() {
 function App() {
   const { state, error, live } = useLiveState();
   const toast = useToast();
-  const token = useStored(TOKEN_KEY);
-  const [loaded, setLoaded] = useState<Me | null>(null);
+  const device = useDeviceId();
+  const [me, setMe] = useState<Me | null>(null);
+  const [checkedDevice, setCheckedDevice] = useState<string | null>(null);
   const [rawDraft, setDraft] = useState<Picks>({});
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState<Tab | null>(null);
   const [viewing, setViewing] = useState<LeaderRow | null>(null);
+  const meLoading = !device || checkedDevice !== device;
 
-  const setMe = setLoaded;
-  // 토큰과 일치하는 참여자 정보만 사용 (로그아웃 시 자동으로 null)
-  const me = token && loaded ? loaded : null;
-  const [failedToken, setFailedToken] = useState<string | null>(null);
-  const meLoading = !!token && !me && failedToken !== token;
-
-  const logout = useCallback(() => {
-    storage.set(TOKEN_KEY, null);
-    setLoaded(null);
-    setDraft({});
-    setDirty(false);
-  }, []);
-
-  // 저장된 로그인 복원
+  // 이 기기로 등록된 참여자 불러오기 (비밀번호 없음 — 기기 자체가 신원)
   useEffect(() => {
-    if (!token) return;
+    if (!device) return;
     let alive = true;
-    api<Me>("/api/me", { token })
-      .then((m) => {
+    api<{ me: Me | null }>("/api/me", { device })
+      .then((r) => {
         if (!alive) return;
-        setLoaded(m);
-        setDraft(m.picks);
+        setMe(r.me);
+        setDraft(r.me?.picks ?? {});
       })
-      .catch((e) => {
-        if (!alive) return;
-        setFailedToken(token);
-        if (e instanceof ClientError && e.status === 401) logout();
-      });
+      .catch(() => {})
+      .finally(() => alive && setCheckedDevice(device));
     return () => {
       alive = false;
     };
-  }, [token, logout]);
+  }, [device]);
 
   const modes = useMemo<Record<string, Mode>>(
     () => Object.fromEntries((state?.matches ?? []).map((m) => [m.key, m.mode])),
@@ -109,10 +94,10 @@ function App() {
     return () => window.removeEventListener("beforeunload", h);
   }, [dirty]);
 
-  const onEntered = async (t: string, created: boolean) => {
-    const m = await api<Me>("/api/me", { token: t });
+  const onEntered = async (created: boolean) => {
+    const { me: m } = await api<{ me: Me | null }>("/api/me", { device });
+    if (!m) return;
     setMe(m);
-    storage.set(TOKEN_KEY, t);
     setDraft(m.picks);
     setDirty(false);
     setTab(null); // 진행 중이면 '내 예측', 마감 후면 '전체 순위'로
@@ -120,10 +105,10 @@ function App() {
   };
 
   const save = async () => {
-    if (!token) return;
+    if (!device) return;
     setSaving(true);
     try {
-      const m = await api<Me>("/api/me", { method: "PUT", body: { picks: draft }, token });
+      const { me: m } = await api<{ me: Me }>("/api/me", { method: "PUT", body: { picks: draft }, device });
       setMe(m);
       setDraft(m.picks);
       setDirty(false);
@@ -191,13 +176,9 @@ function App() {
             row={myRow}
             draft={draft}
             modes={modes}
-            onLogout={async () => {
-              logout();
-              setTab(null);
-            }}
           />
         ) : (
-          <EntryCard status={s.status} onEntered={onEntered} />
+          <EntryCard status={s.status} device={device} onEntered={onEntered} />
         )}
 
         <Tabs value={activeTab} onChange={setTab} items={tabs} />
@@ -282,14 +263,12 @@ function MySummary({
   row,
   draft,
   modes,
-  onLogout,
 }: {
   me: Me;
   state: PublicState;
   row: LeaderRow | null;
   draft: Picks;
   modes: Record<string, Mode>;
-  onLogout: () => void;
 }) {
   const progress = useProgress(state, draft, modes);
   const closed = state.settings.status === "closed";
@@ -307,9 +286,12 @@ function MySummary({
             <div className="truncate text-[13px] text-slate-500">{me.dept}</div>
           </div>
         </div>
-        <Button variant="ghost" size="sm" onClick={onLogout}>
-          로그아웃
-        </Button>
+        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-500" title="이 기기에서만 예측을 등록·수정할 수 있어요">
+          <svg viewBox="0 0 20 20" fill="currentColor" className="size-3.5">
+            <path d="M6 2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H6Zm4 13.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" />
+          </svg>
+          이 기기로 참여 중
+        </span>
       </div>
 
       {closed && row ? (
@@ -356,32 +338,36 @@ function Stat({ label, value, sub, big }: { label: string; value: string; sub?: 
 // ── 입장 카드 ─────────────────────────────────────────
 function EntryCard({
   status,
+  device,
   onEntered,
 }: {
   status: PublicState["settings"]["status"];
-  onEntered: (token: string, created: boolean) => Promise<void>;
+  device: string | null;
+  onEntered: (created: boolean) => Promise<void>;
 }) {
   const confirm = useConfirm();
   const toast = useToast();
   const [dept, setDept] = useState("");
   const [name, setName] = useState("");
-  const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showRelink, setShowRelink] = useState(false);
+  const open = status === "open";
+  const showForm = open || showRelink;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!device) return;
     setErr(null);
     setBusy(true);
     try {
-      type R = { token?: string; created?: boolean; needsConfirm?: boolean; dept?: string; name?: string };
-      let r = await api<R>("/api/enter", { body: { dept, name, pin } });
+      type R = { created?: boolean; relinked?: boolean; needsConfirm?: boolean; dept?: string; name?: string };
+      let r = await api<R>("/api/enter", { body: { dept, name }, device });
       if (r.needsConfirm) {
         const ok = await confirm({
-          title: "새로 참여하시겠어요?",
+          title: "이 정보로 참여할까요?",
           message: (
             <div className="space-y-3">
-              <p>아래 정보로 처음 등록합니다. 다시 들어올 때 같은 부서명·이름·비밀번호가 필요해요.</p>
               <div className="rounded-xl bg-slate-50 px-4 py-3 text-[14px]">
                 <div>
                   <span className="text-slate-400">부서</span> <b className="ml-2 text-ink">{r.dept}</b>
@@ -390,16 +376,20 @@ function EntryCard({
                   <span className="text-slate-400">이름</span> <b className="ml-2 text-ink">{r.name}</b>
                 </div>
               </div>
+              <p className="text-[13px]">
+                등록 후에는 <b className="text-slate-700">지금 이 기기에서만</b> 예측을 입력·수정할 수 있어요. 오타가 없는지 확인해 주세요.
+              </p>
             </div>
           ),
           confirmText: "참여 등록",
         });
         if (!ok) return;
-        r = await api<R>("/api/enter", { body: { dept, name, pin, confirm: true } });
+        r = await api<R>("/api/enter", { body: { dept, name, confirm: true }, device });
       }
-      if (r.token) await onEntered(r.token, !!r.created);
+      if (r.relinked) toast("이 기기로 다시 연결했어요.");
+      await onEntered(!!r.created);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "입장 실패";
+      const msg = e instanceof Error ? e.message : "참여 실패";
       setErr(msg);
       toast(msg, "error");
     } finally {
@@ -409,61 +399,66 @@ function EntryCard({
 
   return (
     <Card className="animate-fade-up overflow-hidden">
-      <div className="grid lg:grid-cols-[1fr_1.1fr]">
-        <div className="px-5 pt-5 sm:px-6 sm:pt-6 lg:border-r lg:border-slate-100 lg:pb-6">
+      <div className={cx("grid", showForm && "lg:grid-cols-[1fr_1.1fr]")}>
+        <div className={cx("px-5 pt-5 sm:px-6 sm:pt-6", showForm ? "lg:border-r lg:border-slate-100 lg:pb-6" : "pb-5 sm:pb-6")}>
           <h2 className="text-[19px] font-extrabold tracking-tight">
-            {status === "open" ? "토토에 참여하세요 ⚽" : status === "ready" ? "곧 토토가 열립니다" : "참여가 마감되었습니다"}
+            {open ? "토토에 참여하세요 ⚽" : status === "ready" ? "곧 토토가 열립니다" : "참여가 마감되었습니다"}
           </h2>
           <p className="mt-2 text-[14px] leading-relaxed text-slate-500">
-            {status === "open" ? (
+            {open ? (
               <>
-                부서명·이름·비밀번호(숫자 4자리)를 입력하면 바로 참여할 수 있어요. 이미 참여했다면 <b className="text-slate-700">같은 정보로 다시 입장</b>해 예측을
-                수정할 수 있습니다.
+                부서명과 이름만 입력하면 바로 참여할 수 있어요. 비밀번호 대신 <b className="text-slate-700">지금 사용하는 기기</b>로 본인을 확인하므로, 예측
+                수정은 처음 등록한 기기에서 해주세요.
               </>
             ) : status === "ready" ? (
               "관리자가 토토를 오픈하면 참여할 수 있습니다. 대진표는 '경기 결과' 탭에서 미리 볼 수 있어요."
             ) : (
-              "이미 참여하셨다면 같은 정보로 입장해 내 순위와 승률을 확인하세요."
+              "이 기기로 참여한 기록이 없어요. 아래 전체 순위에서 결과를 확인할 수 있습니다. 참여했던 기기로 접속하면 내 순위와 승률이 맨 위에 표시돼요."
             )}
           </p>
-          <ul className="mt-4 hidden space-y-2 text-[13px] text-slate-500 lg:block">
-            <li>✓ 경기마다 승리 팀(일부 경기는 스코어까지)을 예측</li>
-            <li>✓ 마감 후 경기 결과에 따라 실시간 순위 반영</li>
-            <li>✓ 공개 후 다른 참여자의 예측도 확인 가능</li>
-          </ul>
+          {open && (
+            <ul className="mt-4 hidden space-y-2 text-[13px] text-slate-500 lg:block">
+              <li>✓ 경기마다 승리 팀(일부 경기는 스코어까지)을 예측</li>
+              <li>✓ 마감 후 경기 결과에 따라 실시간 순위 반영</li>
+              <li>✓ 공개 후 다른 참여자의 예측도 확인 가능</li>
+            </ul>
+          )}
+          {!open && !showRelink && (
+            <button
+              type="button"
+              onClick={() => setShowRelink(true)}
+              className="mt-3 text-[13px] font-semibold text-pitch-600 underline-offset-2 hover:underline"
+            >
+              관리자가 기기를 초기화해 줬다면 → 이 기기로 다시 연결
+            </button>
+          )}
         </div>
-        <form onSubmit={submit} className="grid gap-3 px-5 py-5 sm:grid-cols-2 sm:px-6 sm:py-6">
-          <Field label="부서명">
-            <Input value={dept} onChange={(e) => setDept(e.target.value)} placeholder="예) 경영지원팀" maxLength={40} autoComplete="organization" />
-          </Field>
-          <Field label="이름">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="예) 홍길동" maxLength={30} autoComplete="name" />
-          </Field>
-          <div className="sm:col-span-2">
-            <Field label="비밀번호 (숫자 4자리)" hint="다른 사람이 내 예측을 바꾸지 못하도록 사용됩니다.">
-              <Input
-                value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                inputMode="numeric"
-                type="password"
-                autoComplete="off"
-                placeholder="••••"
-                className="tracking-[0.4em]"
-              />
+        {showForm && (
+          <form onSubmit={submit} className="grid gap-3 px-5 py-5 sm:grid-cols-2 sm:px-6 sm:py-6">
+            <Field label="부서명">
+              <Input value={dept} onChange={(e) => setDept(e.target.value)} placeholder="예) 경영지원팀" maxLength={40} autoComplete="organization" />
             </Field>
-          </div>
-          {err && <p className="text-[13px] font-medium text-rose-600 sm:col-span-2">{err}</p>}
-          <Button
-            type="submit"
-            variant="accent"
-            size="lg"
-            loading={busy}
-            disabled={!dept.trim() || !name.trim() || pin.length !== 4}
-            className="sm:col-span-2"
-          >
-            {status === "open" ? "참여하기 / 입장하기" : "입장하기"}
-          </Button>
-        </form>
+            <Field label="이름">
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="예) 홍길동" maxLength={30} autoComplete="name" />
+            </Field>
+            {!device && (
+              <p className="text-[13px] font-medium text-amber-700 sm:col-span-2">
+                기기 정보를 저장할 수 없습니다. 시크릿 모드가 아닌 일반 브라우저에서, 사이트 데이터 저장을 허용한 뒤 이용해 주세요.
+              </p>
+            )}
+            {err && <p className="text-[13px] font-medium text-rose-600 sm:col-span-2">{err}</p>}
+            <Button
+              type="submit"
+              variant="accent"
+              size="lg"
+              loading={busy}
+              disabled={!device || !dept.trim() || !name.trim()}
+              className="sm:col-span-2"
+            >
+              {open ? "참여하기" : "이 기기로 다시 연결"}
+            </Button>
+          </form>
+        )}
       </div>
     </Card>
   );

@@ -942,8 +942,6 @@ function PeoplePanel({ state, teams, token, act }: { state: PublicState; teams: 
   const [list, setList] = useState<AdminParticipant[] | null>(null);
   const [q, setQ] = useState("");
   const [viewing, setViewing] = useState<AdminParticipant | null>(null);
-  const [pinFor, setPinFor] = useState<AdminParticipant | null>(null);
-  const [pin, setPin] = useState("");
 
   // 상태(결과·참여자 수)가 바뀔 때마다 갱신
   const version = `${state.participantCount}:${state.matches.map((m) => m.winnerTeamId ?? "").join(",")}`;
@@ -1022,7 +1020,14 @@ function PeoplePanel({ state, teams, token, act }: { state: PublicState; teams: 
                 <tr key={r.id} className="hover:bg-slate-50/60">
                   <td className="tabular py-2.5 pr-2 pl-6 font-bold">{r.rank}</td>
                   <td className="max-w-40 truncate px-2 text-slate-600">{r.dept}</td>
-                  <td className="max-w-32 truncate px-2 font-semibold">{r.name}</td>
+                  <td className="max-w-32 truncate px-2 font-semibold">
+                    {r.name}
+                    {!r.deviceBound && (
+                      <span className="ml-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700" title="다음에 같은 부서·이름으로 입장하는 기기에 연결됩니다">
+                        기기 대기
+                      </span>
+                    )}
+                  </td>
                   <td className={cx("tabular px-2 text-right", r.picked < structure ? "text-amber-600" : "text-slate-600")}>
                     {r.picked}/{structure}
                   </td>
@@ -1040,13 +1045,31 @@ function PeoplePanel({ state, teams, token, act }: { state: PublicState; teams: 
                       예측
                     </button>
                     <button
-                      className="rounded-lg px-2 py-1 font-semibold text-slate-600 hover:bg-slate-100"
-                      onClick={() => {
-                        setPin("");
-                        setPinFor(r);
+                      className="rounded-lg px-2 py-1 font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-30"
+                      disabled={!r.deviceBound}
+                      title="휴대폰 교체·브라우저 데이터 삭제 등으로 기존 기기를 못 쓸 때"
+                      onClick={async () => {
+                        if (
+                          await confirm({
+                            title: `${r.name} 기기 초기화`,
+                            message: (
+                              <div className="space-y-2">
+                                <p>
+                                  {r.dept} <b>{r.name}</b>님과 기존 기기의 연결을 해제합니다. 예측 내용은 그대로 유지됩니다.
+                                </p>
+                                <p className="text-[13px]">
+                                  이후 <b>같은 부서명·이름으로 먼저 입장하는 기기</b>에 연결되니, 본인에게 바로 새 기기로 입장하도록 안내하세요.
+                                </p>
+                              </div>
+                            ),
+                            confirmText: "기기 초기화",
+                          })
+                        ) {
+                          if (await act("resetDevice", { id: r.id }, "기기 연결을 해제했습니다")) load();
+                        }
                       }}
                     >
-                      PIN
+                      기기 초기화
                     </button>
                     <button
                       className="rounded-lg px-2 py-1 font-semibold text-rose-500 hover:bg-rose-50"
@@ -1072,32 +1095,6 @@ function PeoplePanel({ state, teams, token, act }: { state: PublicState; teams: 
           </table>
         </div>
       )}
-
-      <Modal
-        open={!!pinFor}
-        onClose={() => setPinFor(null)}
-        title="비밀번호 재설정"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setPinFor(null)}>
-              취소
-            </Button>
-            <Button
-              disabled={pin.length !== 4}
-              onClick={async () => {
-                if (pinFor && (await act("resetPin", { id: pinFor.id, pin }, "비밀번호를 재설정했습니다"))) setPinFor(null);
-              }}
-            >
-              재설정
-            </Button>
-          </>
-        }
-      >
-        <p className="mb-4 text-[14px] text-slate-600">
-          {pinFor?.dept} <b>{pinFor?.name}</b>님의 새 비밀번호(숫자 4자리)를 입력하세요.
-        </p>
-        <Input value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} inputMode="numeric" placeholder="0000" autoFocus className="tracking-[0.4em]" />
-      </Modal>
 
       <AdminPicksModal row={viewing} onClose={() => setViewing(null)} state={state} teams={teams} token={token} />
     </Card>

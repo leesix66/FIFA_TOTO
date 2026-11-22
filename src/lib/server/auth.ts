@@ -1,5 +1,5 @@
 import "server-only";
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { fail } from "./db";
 
 function baseSecret(): string {
@@ -61,35 +61,21 @@ export function requireAdmin(req: Request) {
   if (!p || p.k !== "admin" || p.exp < Date.now()) fail(401, "관리자 인증이 필요합니다.");
 }
 
-// ── 참여자 ────────────────────────────────────────────
-export function issueParticipantToken(id: string): string {
-  return sign({ k: "p", id }, `${baseSecret()}:participant`);
+// ── 참여자: 기기 고유값 ──────────────────────────────
+// 브라우저가 처음 접속할 때 만든 무작위 기기 ID(122비트)를 헤더로 보낸다.
+// 서버에는 해시만 저장하므로 DB 가 노출돼도 기기 ID 를 알 수 없다.
+const DEVICE_RE = /^[A-Za-z0-9-]{16,64}$/;
+
+export function deviceHashFrom(req: Request): string | null {
+  const id = req.headers.get("x-device-id") || "";
+  if (!DEVICE_RE.test(id)) return null;
+  return createHash("sha256").update(`fifa-toto:${id}`).digest("hex");
 }
 
-export function participantIdFrom(req: Request): string | null {
-  const p = verify<{ k: string; id: string }>(bearer(req), `${baseSecret()}:participant`);
-  return p && p.k === "p" && typeof p.id === "string" ? p.id : null;
-}
-
-export function requireParticipant(req: Request): string {
-  const id = participantIdFrom(req);
-  if (!id) fail(401, "다시 로그인해 주세요.");
-  return id;
-}
-
-// ── PIN ───────────────────────────────────────────────
-export function hashPin(pin: string): string {
-  const salt = randomBytes(16);
-  const hash = scryptSync(pin, salt, 32);
-  return `s1$${salt.toString("hex")}$${hash.toString("hex")}`;
-}
-
-export function verifyPin(pin: string, stored: string): boolean {
-  const [v, saltHex, hashHex] = stored.split("$");
-  if (v !== "s1" || !saltHex || !hashHex) return false;
-  const hash = scryptSync(pin, Buffer.from(saltHex, "hex"), 32);
-  const expect = Buffer.from(hashHex, "hex");
-  return hash.length === expect.length && timingSafeEqual(hash, expect);
+export function requireDevice(req: Request): string {
+  const h = deviceHashFrom(req);
+  if (!h) fail(400, "기기 정보를 확인할 수 없습니다. 브라우저의 사이트 데이터 저장을 허용해 주세요.");
+  return h;
 }
 
 export function identOf(dept: string, name: string): string {

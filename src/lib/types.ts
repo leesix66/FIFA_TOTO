@@ -29,4 +29,6 @@ export interface OtherPicks {
 export interface AdminParticipant extends LeaderRow {
   createdAt: string;
   updatedAt: string;
+  /** 기기가 연결되어 있는지 (관리자가 초기화하면 false) */
+  deviceBound: boolean;
 }

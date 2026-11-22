@@ -34,18 +34,23 @@ create table if not exists public.matches (
 );
 
 -- 4) 참여자. picks = { "<match key>": { "w": "<team id>", "ws": 2, "ls": 1 } }
+--    비밀번호 없이 '기기'로 본인 확인: device_hash = 브라우저 기기 ID 의 SHA-256 (한 기기 = 한 참여자)
 create table if not exists public.participants (
-  id            uuid primary key default gen_random_uuid(),
-  dept          text not null check (char_length(dept) between 1 and 40),
-  name          text not null check (char_length(name) between 1 and 30),
-  ident         text not null unique,            -- 공백 제거·소문자 '부서|이름' (중복 참여 방지)
-  pin_hash      text not null,
-  picks         jsonb not null default '{}'::jsonb,
-  failed_logins int not null default 0,
-  locked_until  timestamptz,
-  created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now()
+  id          uuid primary key default gen_random_uuid(),
+  dept        text not null check (char_length(dept) between 1 and 40),
+  name        text not null check (char_length(name) between 1 and 30),
+  ident       text not null unique,            -- 공백 제거·소문자 '부서|이름' (중복 참여 방지)
+  device_hash text unique,                     -- null = 관리자가 기기 초기화 (다음 입장 기기에 연결)
+  picks       jsonb not null default '{}'::jsonb,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
 );
+-- 이전 버전(비밀번호 방식)에서 올라온 DB 정리
+alter table public.participants add column if not exists device_hash text;
+create unique index if not exists participants_device_hash_key on public.participants (device_hash);
+alter table public.participants drop column if exists pin_hash;
+alter table public.participants drop column if exists failed_logins;
+alter table public.participants drop column if exists locked_until;
 
 -- 5) 순위 계산: 승패 적중 1점 + (스코어 경기) 정확한 스코어 적중 시 +1점
 create or replace function public.leaderboard()

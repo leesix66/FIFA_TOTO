@@ -12,7 +12,7 @@ import {
   type MatchRow,
   type Mode,
 } from "@/lib/bracket";
-import { checkAdminCode, hashPin, issueAdminToken, requireAdmin } from "@/lib/server/auth";
+import { checkAdminCode, issueAdminToken, requireAdmin } from "@/lib/server/auth";
 import {
   check,
   db,
@@ -39,15 +39,19 @@ export const GET = route(async (req) => {
   }
   const [board, rows] = await Promise.all([
     getLeaderboard(),
-    db().from("participants").select("id,created_at,updated_at").then(check),
+    db().from("participants").select("id,created_at,updated_at,device_hash").then(check),
   ]);
-  const times = new Map(
-    ((rows ?? []) as { id: string; created_at: string; updated_at: string }[]).map((r) => [r.id, r]),
+  const extra = new Map(
+    ((rows ?? []) as { id: string; created_at: string; updated_at: string; device_hash: string | null }[]).map((r) => [
+      r.id,
+      r,
+    ]),
   );
   const list: AdminParticipant[] = board.map((r) => ({
     ...r,
-    createdAt: times.get(r.id)?.created_at ?? "",
-    updatedAt: times.get(r.id)?.updated_at ?? "",
+    createdAt: extra.get(r.id)?.created_at ?? "",
+    updatedAt: extra.get(r.id)?.updated_at ?? "",
+    deviceBound: !!extra.get(r.id)?.device_hash,
   }));
   return { participants: list };
 });
@@ -294,15 +298,9 @@ export const POST = route(async (req) => {
       return;
     }
 
-    case "resetPin": {
-      const pin = str(b.pin, 4);
-      if (!/^\d{4}$/.test(pin)) fail(400, "비밀번호는 숫자 4자리입니다.");
-      check(
-        await db()
-          .from("participants")
-          .update({ pin_hash: hashPin(pin), failed_logins: 0, locked_until: null })
-          .eq("id", str(b.id, 64)),
-      );
+    case "resetDevice": {
+      // 기기 연결 해제 → 다음에 같은 부서·이름으로 입장하는 기기가 이 참여자를 이어받는다
+      check(await db().from("participants").update({ device_hash: null }).eq("id", str(b.id, 64)));
       return;
     }
 
