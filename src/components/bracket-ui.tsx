@@ -30,6 +30,7 @@ export function feederLabel(m: ResolvedMatch, side: "a" | "b", total: number): s
 }
 
 // ── 대진표 레이아웃: 모바일은 라운드 탭, PC 는 가로 대진표 ──────────
+// 4팀 이하(경기 3~4개)는 모바일에서도 탭 없이 한 화면에 모두 보여 '한 번에' 입력할 수 있게 한다.
 export function BracketLayout({
   matches,
   size,
@@ -54,6 +55,7 @@ export function BracketLayout({
   const third = matches.find((m) => m.third) ?? null;
   const [picked, setActive] = useState(initialRound ?? 1);
   const active = picked > total ? 1 : picked;
+  const stacked = size <= 4;
 
   if (!matches.length) {
     return <p className="py-10 text-center text-sm text-slate-400">{emptyText ?? "대진이 아직 없습니다."}</p>;
@@ -62,7 +64,7 @@ export function BracketLayout({
   return (
     <div>
       {/* 모바일 라운드 선택 */}
-      <div className="no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 lg:hidden">
+      <div className={cx("no-scrollbar -mx-4 mb-4 flex gap-2 overflow-x-auto px-4 lg:hidden", stacked && "hidden")}>
         {rounds.map((r) => (
           <button
             key={r.round}
@@ -79,16 +81,16 @@ export function BracketLayout({
         ))}
       </div>
 
-      <div className="lg:-mx-2 lg:flex lg:overflow-x-auto lg:pb-2">
+      <div className={cx("lg:-mx-2 lg:flex lg:space-y-0 lg:overflow-x-auto lg:pb-2", stacked && "space-y-6")}>
         {rounds.map((r) => (
           <div
             key={r.round}
             className={cx(
               "lg:flex lg:min-w-[232px] lg:flex-1 lg:flex-col lg:px-2",
-              active === r.round ? "block" : "hidden lg:flex",
+              stacked || active === r.round ? "block" : "hidden lg:flex",
             )}
           >
-            <div className="mb-3 hidden items-center gap-2 lg:flex">
+            <div className={cx("mb-3 items-center gap-2", stacked ? "flex" : "hidden lg:flex")}>
               <span className="text-[13px] font-bold text-slate-800">{r.label}</span>
               <span className="text-xs text-slate-400">{r.items.length}경기</span>
             </div>
@@ -100,7 +102,7 @@ export function BracketLayout({
               ))}
               {r.round === total && third && (
                 <div className="animate-fade-up lg:mt-2">
-                  <div className="mb-2 hidden text-[13px] font-bold text-slate-800 lg:block">3·4위전</div>
+                  <div className={cx("mb-2 text-[13px] font-bold text-slate-800", stacked ? "mt-3 block" : "hidden lg:block")}>3·4위전</div>
                   {render(third)}
                 </div>
               )}
@@ -176,11 +178,23 @@ function Stepper({ value, onChange, disabled }: { value: number | undefined; onC
     "flex size-8 items-center justify-center rounded-lg text-lg font-bold leading-none text-slate-500 transition hover:bg-slate-100 active:bg-slate-200 disabled:opacity-30";
   return (
     <div className="flex items-center rounded-xl bg-white ring-1 ring-slate-200" onClick={(e) => e.stopPropagation()}>
-      <button type="button" className={btn} disabled={disabled || v <= 0} onClick={() => onChange(v - 1)} aria-label="점수 감소">
+      <button
+        type="button"
+        className={btn}
+        disabled={disabled || value === 0}
+        onClick={() => onChange(value === undefined ? 0 : v - 1)}
+        aria-label="점수 감소"
+      >
         −
       </button>
       <span className="tabular w-6 text-center text-[15px] font-bold text-ink">{value ?? "–"}</span>
-      <button type="button" className={btn} disabled={disabled || v >= 30} onClick={() => onChange(v + 1)} aria-label="점수 증가">
+      <button
+        type="button"
+        className={btn}
+        disabled={disabled || v >= 30}
+        onClick={() => onChange(value === undefined ? 1 : v + 1)}
+        aria-label="점수 증가"
+      >
         +
       </button>
     </div>
@@ -208,37 +222,52 @@ export function PickCard({
   /** 실제 결과 (있으면 적중 여부 표시) */
   actual?: MatchRow | null;
 }) {
+  // 점수를 한쪽만 넣었거나 동점(승부차기 승자 미선택)인 동안의 임시 입력값
+  const [pending, setPending] = useState<{ a: string; b: string; sa?: number; sb?: number } | null>(null);
   if (m.bye || m.dead) return <ByeCard m={m} teams={teams} total={total} />;
   const label = matchLabel(m, total);
   const a = isTeam(m.a) ? m.a : null;
   const b = isTeam(m.b) ? m.b : null;
   const ready = !!(a && b);
+  const pend = pending && pending.a === a && pending.b === b && !pick ? pending : null;
 
-  const scoreOf = (side: string): number | undefined => {
+  const pickScore = (side: string): number | undefined => {
     if (!pick || mode !== "score" || pick.ws === undefined || pick.ls === undefined) return undefined;
     return pick.w === side ? pick.ws : pick.ls;
   };
+  const scoreOf = (side: string): number | undefined => {
+    if (pick) return pickScore(side);
+    if (!pend) return undefined;
+    return side === pend.a ? pend.sa : pend.sb;
+  };
+  const tiePending = !!pend && pend.sa !== undefined && pend.sa === pend.sb;
 
   const choose = (id: string) => {
     if (!editable || !ready) return;
     if (pick?.w === id) return;
-    if (mode === "score") {
-      const ws = pick?.ws ?? 1;
-      const ls = pick?.ls ?? 0;
-      onChange?.({ w: id, ws, ls });
-    } else onChange?.({ w: id });
+    if (mode !== "score") return onChange?.({ w: id });
+    if (pick) return onChange?.({ w: id, ws: pick.ws ?? 1, ls: pick.ls ?? 0 }); // 승자 변경 = 점수 맞바꿈
+    if (tiePending) {
+      onChange?.({ w: id, ws: pend!.sa!, ls: pend!.sb! }); // 동점 → 승부차기 승자 선택
+      setPending(null);
+      return;
+    }
+    onChange?.({ w: id, ws: 1, ls: 0 });
+    setPending(null);
   };
 
+  // 점수 먼저 입력: 두 팀 점수가 다 들어오면 높은 쪽이 자동으로 승자
   const setScore = (side: string, value: number) => {
     if (!editable || !a || !b) return;
-    let sa = scoreOf(a) ?? (side === a ? 0 : 0);
-    let sb = scoreOf(b) ?? 0;
+    let sa = scoreOf(a);
+    let sb = scoreOf(b);
     if (side === a) sa = value;
     else sb = value;
-    let w = pick?.w ?? (sa >= sb ? a : b);
-    if (sa > sb) w = a;
-    else if (sb > sa) w = b;
+    if (sa === undefined || sb === undefined) return setPending({ a, b, sa, sb });
+    if (sa === sb && !pick) return setPending({ a, b, sa, sb });
+    const w = sa > sb ? a : sb > sa ? b : pick!.w;
     onChange?.({ w, ws: Math.max(sa, sb), ls: Math.min(sa, sb) });
+    setPending(null);
   };
 
   // 실제 결과 대비 적중 표시
@@ -304,7 +333,7 @@ export function PickCard({
         >
           {t?.name ?? "알 수 없는 팀"}
         </span>
-        {mode === "score" && pick && (editable ? (
+        {mode === "score" && (editable ? ready : pick) && (editable ? (
           <Stepper value={scoreOf(id)} onChange={(v) => setScore(id, v)} />
         ) : (
           <span className="tabular w-6 text-center text-[15px] font-bold">{scoreOf(id) ?? "–"}</span>
@@ -324,8 +353,14 @@ export function PickCard({
     <CardShell label={label} mode={mode} footer={footer} highlight={highlight}>
       {row("a")}
       {row("b")}
+      {editable && mode === "score" && tiePending && (
+        <p className="px-1 text-[12px] font-semibold text-amber-600">동점이에요 — 승부차기로 이길 팀을 눌러주세요.</p>
+      )}
       {editable && mode === "score" && pick && scoreOf(a ?? "") === scoreOf(b ?? "") && (
-        <p className="px-1 text-[11px] text-slate-400">동점이면 선택한 팀이 승부차기 승리로 처리됩니다.</p>
+        <p className="px-1 text-[11px] text-slate-400">동점 — 체크된 팀이 승부차기 승리로 처리됩니다.</p>
+      )}
+      {editable && mode === "score" && ready && !pick && !tiePending && (
+        <p className="px-1 text-[11px] text-slate-400">두 팀 점수를 넣으면 승자가 자동으로 정해져요.</p>
       )}
     </CardShell>
   );

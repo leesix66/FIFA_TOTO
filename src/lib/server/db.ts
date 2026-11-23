@@ -104,8 +104,11 @@ export async function getMatches(): Promise<MatchRow[]> {
 }
 
 export async function getLeaderboard(): Promise<LeaderRow[]> {
-  const rows = (check(await db().rpc("leaderboard")) ?? []) as Omit<LeaderRow, "points" | "rate" | "rank">[];
-  return rankRows(rows);
+  type Raw = Omit<LeaderRow, "points" | "rate" | "rank" | "decidedScore"> & { decided_score: number | null };
+  const rows = (check(await db().rpc("leaderboard")) ?? []) as Raw[];
+  return rankRows(
+    rows.map(({ decided_score, ...r }) => ({ ...r, decidedScore: decided_score ?? 0, champ: r.champ ?? null })),
+  );
 }
 
 export async function getPickStats(): Promise<Record<string, Record<string, number>>> {

@@ -53,12 +53,22 @@ alter table public.participants drop column if exists failed_logins;
 alter table public.participants drop column if exists locked_until;
 
 -- 5) 순위 계산: 승패 적중 1점 + (스코어 경기) 정확한 스코어 적중 시 +1점
+--    decided_score = 결과(점수 포함)가 나온 스코어 경기 수, champ = 결승 승자(우승팀) 적중 여부 (결승 전이면 null)
+--    반환 컬럼이 바뀌면 create or replace 가 안 되므로 먼저 지운다 (바로 아래에서 다시 만들고 권한도 다시 막음)
+drop function if exists public.leaderboard();
 create or replace function public.leaderboard()
-returns table (id uuid, dept text, name text, hits int, exact int, decided int, picked int)
+returns table (id uuid, dept text, name text, hits int, exact int, decided int, picked int, decided_score int, champ boolean)
 language sql stable security definer set search_path = public as $$
   with r as (
     select key, winner_team_id::text as w, winner_score, loser_score, mode
     from matches where winner_team_id is not null
+  ),
+  fk as (  -- 결승 경기 key: 대진 크기 2^R 이면 'R-0'
+    select (round(ln(greatest(jsonb_array_length(draw), 2)) / ln(2)))::int::text || '-0' as k
+    from settings where id = 1
+  ),
+  f as (
+    select m.winner_team_id::text as w from matches m join fk on m.key = fk.k where m.winner_team_id is not null
   )
   select p.id, p.dept, p.name,
     (count(r.key) filter (where p.picks -> r.key ->> 'w' = r.w))::int as hits,
@@ -69,7 +79,9 @@ language sql stable security definer set search_path = public as $$
         and p.picks -> r.key -> 'ls' = to_jsonb(r.loser_score)
     ))::int as exact,
     (select count(*) from r)::int as decided,
-    (select count(*) from jsonb_object_keys(p.picks))::int as picked
+    (select count(*) from jsonb_object_keys(p.picks))::int as picked,
+    (select count(*) from r where r.mode = 'score' and r.winner_score is not null)::int as decided_score,
+    (select coalesce(p.picks -> fk.k ->> 'w' = f.w, false) from fk, f) as champ
   from participants p
   left join r on true
   group by p.id;

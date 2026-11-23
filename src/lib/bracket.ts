@@ -277,9 +277,44 @@ export interface LeaderRow {
   exact: number;
   decided: number;
   picked: number;
+  /** 결과(점수 포함)가 확정된 스코어 경기 수 */
+  decidedScore: number;
+  /** 우승팀(결승 승자) 적중 여부 — 결승 결과 전이면 null */
+  champ: boolean | null;
   points: number;
   rate: number; // 0~1
   rank: number;
+}
+
+export interface WinnerGroups {
+  /** 결과가 나온 모든 경기의 승자 + (스코어 경기) 정확한 점수까지 적중 */
+  perfect: LeaderRow[];
+  /** 결과가 나온 모든 경기의 승자 적중 (점수 무관, 완벽 적중자 포함) */
+  allWinners: LeaderRow[];
+  /** 우승팀 적중 */
+  champion: LeaderRow[];
+  decided: number;
+  decidedScore: number;
+  /** 예측 대상 경기가 모두 끝났는지 */
+  final: boolean;
+  /** 결승 결과가 나왔는지 */
+  championDecided: boolean;
+}
+
+/** 당첨자 가려내기 — 경기 결과가 들어올 때마다 '지금까지 기준'으로 계산 */
+export function winnerGroups(rows: LeaderRow[], totalPlayable: number): WinnerGroups {
+  const decided = rows[0]?.decided ?? 0;
+  const decidedScore = rows[0]?.decidedScore ?? 0;
+  const live = decided > 0;
+  return {
+    perfect: live ? rows.filter((r) => r.hits === r.decided && r.exact === r.decidedScore) : [],
+    allWinners: live ? rows.filter((r) => r.hits === r.decided) : [],
+    champion: rows.filter((r) => r.champ === true),
+    decided,
+    decidedScore,
+    final: totalPlayable > 0 && decided >= totalPlayable,
+    championDecided: rows.some((r) => r.champ !== null),
+  };
 }
 
 export function rankRows(rows: Omit<LeaderRow, "points" | "rate" | "rank">[]): LeaderRow[] {

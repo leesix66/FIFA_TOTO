@@ -13,6 +13,7 @@ import {
   roundCount,
   roundName,
   validateDraw,
+  winnerGroups,
   type MatchRow,
   type Mode,
   type ResolvedMatch,
@@ -31,6 +32,7 @@ import {
   type TeamMap,
 } from "@/components/bracket-ui";
 import { Hero } from "@/components/hero";
+import { WinnersPanel } from "@/components/winners";
 import {
   Button,
   Card,
@@ -215,6 +217,8 @@ function Admin({ token, onLogout }: { token: string; onLogout: () => void }) {
         {tab === "ops" && <OpsPanel state={state} act={act} goTo={setTab} />}
         {tab === "teams" && <TeamsPanel state={state} teams={teams} act={act} />}
         {tab === "results" && <ResultsAdminPanel state={state} teams={teams} act={act} />}
+        {tab === "results" && s.status === "closed" && <WinnersPanel state={state} admin />}
+        {tab === "people" && s.status === "closed" && <WinnersPanel state={state} admin />}
         {tab === "people" && <PeoplePanel state={state} teams={teams} token={token} act={act} />}
       </main>
     </div>
@@ -965,9 +969,25 @@ function PeoplePanel({ state, teams, token, act }: { state: PublicState; teams: 
 
   const exportCsv = () => {
     if (!list) return;
-    const head = ["순위", "부서", "이름", "점수", "적중", "스코어적중", "결과확정경기", "승률(%)", "예측수", "등록시각"];
+    const g = winnerGroups(list, structure);
+    const has = (rows: AdminParticipant[] | typeof g.perfect, id: string) => (rows.some((x) => x.id === id) ? "O" : "");
+    const head = ["순위", "부서", "이름", "점수", "적중", "스코어적중", "결과확정경기", "승률(%)", "예측수", "점수+승자 모두 적중", "승자 모두 적중", "우승팀 적중", "등록시각"];
     const lines = list.map((r) =>
-      [r.rank, r.dept, r.name, r.points, r.hits, r.exact, r.decided, Math.round(r.rate * 1000) / 10, r.picked, new Date(r.createdAt).toLocaleString("ko-KR")]
+      [
+        r.rank,
+        r.dept,
+        r.name,
+        r.points,
+        r.hits,
+        r.exact,
+        r.decided,
+        Math.round(r.rate * 1000) / 10,
+        r.picked,
+        has(g.perfect, r.id),
+        has(g.allWinners, r.id),
+        has(g.champion, r.id),
+        new Date(r.createdAt).toLocaleString("ko-KR"),
+      ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(","),
     );

@@ -18,6 +18,7 @@ import type { Me, OtherPicks, PublicState } from "@/lib/types";
 import { BracketLayout, PickCard, ResultCard, useTeamMap, type TeamMap } from "@/components/bracket-ui";
 import { Hero } from "@/components/hero";
 import { Leaderboard, RateBar } from "@/components/leaderboard";
+import { MyWinnerBadges, WinnersPanel } from "@/components/winners";
 import {
   Button,
   Card,
@@ -201,6 +202,8 @@ function App() {
           />
         )}
 
+        {activeTab === "rank" && closed && <WinnersPanel state={state} meId={me?.id} />}
+
         {activeTab === "rank" && (
           <Card className="overflow-hidden">
             <CardHeader
@@ -319,6 +322,7 @@ function MySummary({
           </p>
         </div>
       )}
+      {closed && <MyWinnerBadges state={state} meId={me.id} />}
     </Card>
   );
 }
